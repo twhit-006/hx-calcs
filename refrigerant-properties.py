@@ -1,6 +1,8 @@
 import CoolProp.CoolProp as CP
+from CoolProp.CoolProp import AbstractState
 import numpy as np
 import pint
+import os
 
 class fluid:
     def __init__(self, name):
@@ -8,7 +10,8 @@ class fluid:
         self.Q_ = self.ureg.Quantity
 
         # Canonical property symbols expected by CoolProp
-        # T[K], P[Pa], H[J/kg], S[J/kg/K], D[kg/m^3], Q[-], C[J/kg/K], viscosity[Pa.s], conductivity[W/m/K]
+        # T[K], P[Pa], H[J/kg], S[J/kg/K], D[kg/m^3], Q[-], C[J/kg/K], viscosity[Pa.s],
+        # conductivity[W/m/K]
         self.parameters = {
             "T": self.ureg.kelvin,
             "P": self.ureg.pascal,
@@ -24,11 +27,29 @@ class fluid:
         # Commonly used fluids and corresponding CoolProp names
         self.fluids = {
             "1233": "R1233zd(E)",
-            "515": "R1234ze(E)[0.127]&R227ea[0.873]",
             "pg25": "INCOMP::APG-25%",
             "water": "Water"
         }
         
+        # R515b needs REFPROP and a custom mixture file to work properly, but approximate
+        # properties can be obtained without either. ALWAYS RUN REFPROP FOR ACCURATE RESULTS.
+        if name == "515":
+            has_refprop = bool(CP.get_global_param_string("REFPROP_version"))
+            if has_refprop:
+                print("REFPROP found.")
+                try:
+                    AbstractState("REFPROP", "R515B-TW.MIX")
+                except Exception:
+                    print("R515B-TW.MIX missing from REFPROP mixtures directory, using custom mixture for R515b, properties may differ.")
+                    self.fluids["515"] = "REFPROP::R1234ZEE[0.1271]&R227EA[0.8729]"
+                else:
+                    print("R515B-TW.MIX found.")
+                    self.fluids["515"] = "REFPROP::R515B-TW.MIX"
+            else:
+                print("No REFPROP installation found, using custom mixture for R515b, properties may differ.")
+                self.fluids["515"] = "R1234yf[0.1271]&R227EA[0.8729]"
+        
+        # Allow user to input custom fluid types.
         if name not in self.fluids:
             self.name = name
             print(f"User provided custom fluid, ensure valid CoolProp name: {name}")
@@ -72,6 +93,7 @@ class fluid:
         property_dict = {}
         # Get properties from CoolProp
         for prp in self.parameters.keys():
+            # Skip quality if not in two-phase region
             if prp == "Q" and self.phase != "two_phase":
                 continue
             property_dict[prp] = CP.PropsSI(prp, self.prop1, self.val1, self.prop2, self.val2, self.name)
@@ -79,4 +101,5 @@ class fluid:
         
 if __name__ == "__main__":
     fld = fluid("515")
-    print(fld.get_properties("T", 25, "degC", "P", 150, "psi"))
+    print(fld.get_properties("T", 40, "degC", "Q", 0, ""))
+    print(fld.from_si("P", fld.get_properties("T", 40, "degC", "Q", 0, "")["P"], "psi"))
