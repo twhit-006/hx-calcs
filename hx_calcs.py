@@ -32,6 +32,7 @@ class e_NTU_HX:
             "m_dot_C": "", # Cold fluid mass flow rate
         }
         
+
         self.internal_knowns = []
 
         for known in self.knowns:
@@ -43,5 +44,9 @@ class e_NTU_HX:
                     int_units = self.internal_units[param_type]
                     int_value = unit_conv(known["value"], known["units"], int_units).magnitude
                     int_knowns = {"name": known["name"], "value": int_value, "units": int_units}
+                    break
+
+                else:
+                    raise ValueError(f"Unknown parameter type in knowns: {known['name']}")
             
             self.internal_knowns.append(int_knowns)
