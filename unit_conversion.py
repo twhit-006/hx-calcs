@@ -1,5 +1,5 @@
 # Simple unit conversion function using Pint. Must use appropriate unit strings.
-def property_conversion(quantity, from_units, to_units):
+def unit_conversion(quantity, from_units, to_units):
     import pint
     
     ureg = pint.UnitRegistry()

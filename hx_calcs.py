@@ -1,5 +1,5 @@
 import fluid_properties as fp
-from property_conversion import property_conversion as unit_conv
+from unit_conversion import unit_conversion as unit_conv
 import pint
 
 class e_NTU_HX:
