@@ -3,11 +3,11 @@ from CoolProp.CoolProp import AbstractState
 import numpy as np
 import pint
 import os
+from property_conversion import property_conversion as pc
 
 class fluid:
     def __init__(self, name):
         self.ureg = pint.UnitRegistry()
-        self.Q_ = self.ureg.Quantity
 
         # Canonical property symbols expected by CoolProp
         # T[K], P[Pa], H[J/kg], S[J/kg/K], D[kg/m^3], Q[-], C[J/kg/K], viscosity[Pa.s],
@@ -34,9 +34,9 @@ class fluid:
         # R515b needs REFPROP and a custom mixture file to work properly, but approximate
         # properties can be obtained without either. ALWAYS RUN REFPROP FOR ACCURATE RESULTS.
         if name == "515":
-            has_refprop = bool(CP.get_global_param_string("REFPROP_version"))
-            if has_refprop:
-                print("REFPROP found.")
+            refprop_version = CP.get_global_param_string("REFPROP_version")
+            if refprop_version and refprop_version != "n/a":
+                print("REFPROP found. Version:", refprop_version)
                 try:
                     AbstractState("REFPROP", "R515B-TW.MIX")
                 except Exception:
@@ -73,9 +73,9 @@ class fluid:
         if prop1 == prop2:
             raise ValueError("Input properties must be different")
         self.prop1 = prop1
-        self.val1 = self.to_si(prop1, value1, units1)
+        self.val1 = pc(value1, units1, self.parameters[prop1]).magnitude
         self.prop2 = prop2
-        self.val2 = self.to_si(prop2, value2, units2)
+        self.val2 = pc(value2, units2, self.parameters[prop2]).magnitude
 
     # Check if state is valid and input properties are appropriate for the given state
     def state_check(self):
@@ -102,4 +102,4 @@ class fluid:
 if __name__ == "__main__":
     fld = fluid("515")
     print(fld.get_properties("T", 40, "degC", "Q", 0, ""))
-    print(fld.from_si("P", fld.get_properties("T", 40, "degC", "Q", 0, "")["P"], "psi"))
+    print(pc(fld.get_properties("T", 40, "degC", "Q", 0, "")["P"], fld.parameters["P"], "psi").magnitude)
