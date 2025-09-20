@@ -3,25 +3,27 @@ from CoolProp.CoolProp import AbstractState
 import numpy as np
 import pint
 import os
-from property_conversion import property_conversion as pc
+from unit_conversion import unit_conversion as unit_conv
+
+ureg = pint.UnitRegistry()
 
 class fluid:
     def __init__(self, name):
-        self.ureg = pint.UnitRegistry()
+        ureg = pint.UnitRegistry()
 
         # Canonical property symbols expected by CoolProp
         # T[K], P[Pa], H[J/kg], S[J/kg/K], D[kg/m^3], Q[-], C[J/kg/K], viscosity[Pa.s],
         # conductivity[W/m/K]
         self.parameters = {
-            "T": self.ureg.kelvin,
-            "P": self.ureg.pascal,
-            "H": self.ureg.joule / self.ureg.kilogram,
-            "S": self.ureg.joule / (self.ureg.kilogram * self.ureg.kelvin),
-            "D": self.ureg.kilogram / self.ureg.meter**3,
-            "Q": self.ureg.dimensionless,
-            "C": self.ureg.joule / (self.ureg.kilogram * self.ureg.kelvin),
-            "viscosity": self.ureg.pascal * self.ureg.second,
-            "conductivity": self.ureg.watt / (self.ureg.meter * self.ureg.kelvin)
+            "T": ureg.kelvin,
+            "P": ureg.pascal,
+            "H": ureg.joule / ureg.kilogram,
+            "S": ureg.joule / (ureg.kilogram * ureg.kelvin),
+            "D": ureg.kilogram / ureg.meter**3,
+            "Q": ureg.dimensionless,
+            "C": ureg.joule / (ureg.kilogram * ureg.kelvin),
+            "viscosity": ureg.pascal * ureg.second,
+            "conductivity": ureg.watt / (ureg.meter * ureg.kelvin)
         }
 
         # Commonly used fluids and corresponding CoolProp names
@@ -34,9 +36,13 @@ class fluid:
         # R515b needs REFPROP and a custom mixture file to work properly, but approximate
         # properties can be obtained without either. ALWAYS RUN REFPROP FOR ACCURATE RESULTS.
         if name == "515":
-            refprop_version = CP.get_global_param_string("REFPROP_version")
-            if refprop_version and refprop_version != "n/a":
-                print("REFPROP found. Version:", refprop_version)
+            try:
+                AbstractState("REFPROP", "Water")
+            except Exception:
+                print("No REFPROP installation found, using custom CoolProp mixture for R515b, properties may differ.")
+                self.fluids["515"] = "R1234yf[0.1271]&R227EA[0.8729]"
+            else:
+                print("REFPROP found. Version:", CP.get_global_param_string("REFPROP_version"))
                 try:
                     AbstractState("REFPROP", "R515B-TW.MIX")
                 except Exception:
@@ -44,10 +50,7 @@ class fluid:
                     self.fluids["515"] = "REFPROP::R1234ZEE[0.1271]&R227EA[0.8729]"
                 else:
                     print("R515B-TW.MIX found.")
-                    self.fluids["515"] = "REFPROP::R515B-TW.MIX"
-            else:
-                print("No REFPROP installation found, using custom mixture for R515b, properties may differ.")
-                self.fluids["515"] = "R1234yf[0.1271]&R227EA[0.8729]"
+                    self.fluids["515"] = "REFPROP::R515B-TW.MIX"                
         
         # Allow user to input custom fluid types.
         if name not in self.fluids:
@@ -56,26 +59,14 @@ class fluid:
         else:
             self.name = self.fluids[name]
 
-    # Convert to SI units from user input
-    def to_si(self, prop, value, units):
-        nonsi = self.Q_(value, units)
-        si = nonsi.to(self.parameters[prop])
-        return si.magnitude
-    
-    # Convert from SI units to user input
-    def from_si(self, prop, value, units):
-        si = self.Q_(value, self.parameters[prop])
-        nonsi = si.to(units)
-        return nonsi.magnitude
-
     # Convert units, reset input properties in object
     def val_set(self, prop1, value1, units1, prop2, value2, units2):
         if prop1 == prop2:
             raise ValueError("Input properties must be different")
         self.prop1 = prop1
-        self.val1 = pc(value1, units1, self.parameters[prop1]).magnitude
+        self.val1 = unit_conv(value1, units1, self.parameters[prop1]).magnitude
         self.prop2 = prop2
-        self.val2 = pc(value2, units2, self.parameters[prop2]).magnitude
+        self.val2 = unit_conv(value2, units2, self.parameters[prop2]).magnitude
 
     # Check if state is valid and input properties are appropriate for the given state
     def state_check(self):
@@ -101,5 +92,5 @@ class fluid:
         
 if __name__ == "__main__":
     fld = fluid("515")
-    print(fld.get_properties("T", 40, "degC", "Q", 0, ""))
-    print(pc(fld.get_properties("T", 40, "degC", "Q", 0, "")["P"], fld.parameters["P"], "psi").magnitude)
+    print(fld.get_properties("T", 40, ureg.celsius, "Q", 0, ureg.dimensionless))
+    print(unit_conv(fld.get_properties("T", 40, ureg.celsius, "Q", 0, ureg.dimensionless)["P"], fld.parameters["P"], ureg.psi).magnitude)
