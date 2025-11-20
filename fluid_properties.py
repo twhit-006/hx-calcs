@@ -92,5 +92,5 @@ class fluid:
         
 if __name__ == "__main__":
     fld = fluid("515")
-    print(fld.get_properties("T", 40, ureg.celsius, "Q", 0, ureg.dimensionless))
+    print(fld.get_properties("T", 40, ureg.celsius, "Q", 0, ureg.dimensionless)["C"])
     print(unit_conv(fld.get_properties("T", 40, ureg.celsius, "Q", 0, ureg.dimensionless)["P"], fld.parameters["P"], ureg.psi).magnitude)

@@ -9,7 +9,7 @@ ureg = pint.UnitRegistry()
 Q_ = ureg.Quantity
 
 class HeatExchanger:
-    def __init__ (self, cold_fluid, hot_fluid, configuration, knowns, cold_quality=None, hot_quality=None, cold_subcool=None, hot_subcool=None):
+    def __init__ (self, cold_fluid, hot_fluid, configuration, knowns, cold_quality=None, hot_quality=None):
 
         self.cold_fluid = fp.fluid(cold_fluid)
         self.hot_fluid = fp.fluid(hot_fluid)
@@ -18,35 +18,23 @@ class HeatExchanger:
         self.quality = {}
         self.hfg = {}
         self.cp = {}
-        self.subcool = {}
+
+        if self.hot_fluid.name in ("1233", "515") and self.cold_fluid.name in ("1233", "515"):
+            raise ValueError("Use refrigerant to refrigerant heat exchanger solver.")
 
         if cold_quality is not None and self.cold_fluid.name in ("1233", "515"):
             self.quality["cold"] = Q_(cold_quality,ureg.dimensionless)
-            if cold_subcool is not None:
-                self.subcool["cold"] = Q_(cold_subcool,ureg.kelvin)
-            else:
-                self.subcool["hot"] = Q_(0,ureg.kelvin)
-                print("No cold fluid subcooling specified, assuming saturated fluid inlet.")
         elif cold_quality is not None and self.cold_fluid.name not in ("1233", "515"):
             raise ValueError("Cold fluid quality should only be specified for refrigerants.")
         elif cold_quality is None and self.cold_fluid.name in ("1233", "515"):
             raise ValueError("Cold fluid quality must be specified for refrigerants.")
-        elif cold_subcool is not None and self.cold_fluid.name not in ("1233", "515"):
-            raise ValueError("Cold fluid subcooling should only be specified for refrigerants.")
             
         if hot_quality is not None and self.hot_fluid.name in ("1233", "515"):
             self.quality["hot"] = Q_(hot_quality,ureg.dimensionless)
-            if hot_subcool is not None:
-                self.subcool["hot"] = Q_(hot_subcool,ureg.kelvin)
-            else:
-                self.subcool["hot"] = Q_(0,ureg.kelvin)
-                print("No hot fluid subcooling specified, assuming saturated fluid exit.")
         elif hot_quality is not None and self.hot_fluid.name not in ("1233", "515"):
             raise ValueError("Hot fluid quality should only be specified for refrigerants.")
         elif hot_quality is None and self.hot_fluid.name in ("1233", "515"):
             raise ValueError("Hot fluid quality must be specified for refrigerants.")
-        elif hot_subcool is not None and self.hot_fluid.name not in ("1233", "515"):
-            raise ValueError("Hot fluid subcooling should only be specified for refrigerants.")
 
         self.internal_units = {
             "T": ureg.kelvin,
@@ -110,7 +98,7 @@ class HeatExchanger:
         unsolved = {key: qty for key, qty in self.unknowns.items() if qty is None}
 
         # Merge solved unknowns into knowns
-        self.knowns.update(solved)
+        self.internal_knowns.update(solved)
 
         # Keep only the still-unsolved ones
         self.unknowns = unsolved
@@ -121,8 +109,8 @@ class HeatExchanger:
         for name, qty in self.knowns.items():
             for param_type, int_units in self.internal_units.items():
                 if param_type in name:
-                    int_qty = unit_conv(qty.magnitude, qty.units, int_units)
-                    self.internal_knowns[name] = int_qty
+                    int_qty = unit_conv(qty.magnitude, qty.units, int_units).magnitude
+                    self.internal_knowns[name] = Q_(int_qty, int_units)
                     break
             else:
                 raise ValueError(f"Unknown parameter type in knowns: {name}")
@@ -142,138 +130,146 @@ class HeatExchanger:
                     
                     # Two phase cold stream
                     if self.cold_fluid.name in ("1233", "515"):
-                        self.hfg["cold"] = self.cold_fluid.get_properties("T", self.knowns["T_C_o"], ureg.celsius, "Q", 1, ureg.dimensionless)["H"] - self.cold_fluid.get_properties("T", self.knowns["T_C_o"], ureg.celsius, "Q", 0, ureg.dimensionless)["H"]
-                        self.cp["cold"] = self.cold_fluid.get_properties("T", self.knowns["T_C_i"], ureg.celsius, "Q", 0, ureg.dimensionless)["C"]
-                        self.unknowns["q"] = self.knowns["m_dot_C"] * (self.quality["cold"] * self.hfg["cold"] + self.cp["cold"] * (self.knowns["T_C_o"] - self.knowns["T_C_i"]))
+                        self.hfg["cold"] = Q_(self.cold_fluid.get_properties("T", self.internal_knowns["T_C_o"].magnitude, ureg.kelvin, "Q", 1, ureg.dimensionless)["H"] - self.cold_fluid.get_properties("T", self.internal_knowns["T_C_o"].magnitude, ureg.kelvin, "Q", 0, ureg.dimensionless)["H"], ureg.joule / ureg.kilogram)
+                        self.unknowns["q"] = self.internal_knowns["m_dot_C"] * self.quality["cold"] * self.hfg["cold"]
 
                     # Single phase cold stream
                     else:
-                        self.cp["cold"] = self.cold_fluid.get_properties("T", (self.knowns["T_C_i"]+self.knowns["T_C_o"])/2, ureg.celsius, "Q", 0, ureg.dimensionless)["C"]
-                        self.unknowns["q"] = self.knowns["m_dot_C"] * self.cp["cold"] * (self.knowns["T_C_o"] - self.knowns["T_C_i"])
+                        self.cp["cold"] = Q_(self.cold_fluid.get_properties("T", (self.internal_knowns["T_C_i"].magnitude+self.internal_knowns["T_C_o"].magnitude)/2, ureg.kelvin, "P", 101.3, ureg.kilopascal)["C"], ureg.joule / (ureg.kilogram * ureg.kelvin))
+                        self.unknowns["q"] = self.internal_knowns["m_dot_C"] * self.cp["cold"] * (self.internal_knowns["T_C_o"] - self.internal_knowns["T_C_i"])
                 
                 # Unknown mass flow rate
                 elif "m_dot_C" in self.cold_unknowns.keys():
                     
                     # Two phase cold stream
                     if self.cold_fluid.name in ("1233", "515"):
-                        self.hfg["cold"] = self.cold_fluid.get_properties("T", self.knowns["T_C_o"], ureg.celsius, "Q", 1, ureg.dimensionless)["H"] - self.cold_fluid.get_properties("T", self.knowns["T_C_o"], ureg.celsius, "Q", 0, ureg.dimensionless)["H"]
-                        self.cp["cold"] = self.cold_fluid.get_properties("T", self.knowns["T_C_i"], ureg.celsius, "Q", 0, ureg.dimensionless)["C"]
-                        self.unknowns["m_dot_C"] = self.knowns["q"] / (self.quality["cold"] * self.hfg["cold"] + self.cp["cold"] * (self.knowns["T_C_o"] - self.knowns["T_C_i"]))
+                        self.hfg["cold"] = Q_(self.cold_fluid.get_properties("T", self.internal_knowns["T_C_o"].magnitude, ureg.kelvin, "Q", 1, ureg.dimensionless)["H"] - self.cold_fluid.get_properties("T", self.internal_knowns["T_C_o"].magnitude, ureg.kelvin, "Q", 0, ureg.dimensionless)["H"], ureg.joule / ureg.kilogram)
+                        self.unknowns["m_dot_C"] = self.internal_knowns["q"] / (self.quality["cold"] * self.hfg["cold"])
                     
                     # Single phase cold stream
                     else:
-                        self.cp["cold"] = self.cold_fluid.get_properties("T", (self.knowns["T_C_i"]+self.knowns["T_C_o"])/2, ureg.celsius, "Q", 0, ureg.dimensionless)["C"]
-                        self.unknowns["m_dot_C"] = self.knowns["q"] / (self.cp["cold"] * (self.knowns["T_C_o"] - self.knowns["T_C_i"]))
+                        self.cp["cold"] = Q_(self.cold_fluid.get_properties("T", (self.internal_knowns["T_C_i"].magnitude+self.internal_knowns["T_C_o"].magnitude)/2, ureg.kelvin, "P", 101.3, ureg.kilopascal)["C"], ureg.joule / (ureg.kilogram * ureg.kelvin))
+                        self.unknowns["m_dot_C"] = self.internal_knowns["q"] / (self.cp["cold"] * (self.internal_knowns["T_C_o"] - self.internal_knowns["T_C_i"]))
 
                 # Unknown outlet temperature
                 elif "T_C_o" in self.cold_unknowns.keys():
                     
                     # Two phase cold stream
                     if self.cold_fluid.name in ("1233", "515"):
-                        self.unknowns["T_C_o"] = self.knowns["T_C_i"] + self.subcool["cold"]
+                        self.unknowns["T_C_o"] = self.internal_knowns["T_C_i"]
 
                     # Single phase cold stream
                     else:
-                        self.cp["cold"] = self.cold_fluid.get_properties("T", self.knowns["T_C_i"], ureg.celsius, "Q", 0, ureg.dimensionless)["C"]
-                        self.unknowns["T_C_o"] = self.knowns["T_C_i"] + self.knowns["q"] / (self.knowns["m_dot_C"] * self.cp["cold"])
+                        self.cp["cold"] = Q_(self.cold_fluid.get_properties("T", self.internal_knowns["T_C_i"].magnitude, ureg.kelvin, "P", 101.3, ureg.kilopascal)["C"], ureg.joule / (ureg.kilogram * ureg.kelvin))
+                        self.unknowns["T_C_o"] = self.internal_knowns["T_C_i"] + self.internal_knowns["q"] / (self.internal_knowns["m_dot_C"] * self.cp["cold"])
+                        cpcheck = Q_(self.cold_fluid.get_properties("T", self.internal_knowns["T_C_o"].magnitude, ureg.kelvin, "P", 101.3, ureg.kilopascal)["C"], ureg.joule / (ureg.kilogram * ureg.kelvin))
+                        if abs((cpcheck - self.cp["cold"])/self.cp["cold"]) > 0.05:
+                            print(f"Warning: Significant change in cold stream specific heat capacity detected. Relative change: {100*abs((cpcheck - self.cp["cold"])/self.cp["cold"]):.2f}%")
 
                 # Unknown inlet temperature
                 elif "T_C_i" in self.cold_unknowns.keys():
                     
                     # Two phase cold stream
                     if self.cold_fluid.name in ("1233", "515"):
-                        self.unknowns["T_C_i"] = self.knowns["T_C_o"] - self.subcool["cold"]
+                        self.unknowns["T_C_i"] = self.internal_knowns["T_C_o"]
 
                     # Single phase cold stream
                     else:
-                        self.cp["cold"] = self.cold_fluid.get_properties("T", self.knowns["T_C_o"], ureg.celsius, "Q", 0, ureg.dimensionless)["C"]
-                        self.unknowns["T_C_i"] = self.knowns["T_C_o"] - self.knowns["q"] / (self.knowns["m_dot_C"] * self.cold_cp)
+                        self.cp["cold"] = Q_(self.cold_fluid.get_properties("T", self.internal_knowns["T_C_o"].magnitude, ureg.kelvin, "P", 101.3, ureg.kilopascal)["C"], ureg.joule / (ureg.kilogram * ureg.kelvin))
+                        self.unknowns["T_C_i"] = self.internal_knowns["T_C_o"] - self.internal_knowns["q"] / (self.internal_knowns["m_dot_C"] * self.cp["cold"])
+                        cpcheck = Q_(self.cold_fluid.get_properties("T", self.internal_knowns["T_C_i"].magnitude, ureg.kelvin, "P", 101.3, ureg.kilopascal)["C"], ureg.joule / (ureg.kilogram * ureg.kelvin))
+                        if abs((cpcheck - self.cp["cold"])/self.cp["cold"]) > 0.05:
+                            print(f"Warning: Significant change in cold stream specific heat capacity detected. Relative change: {100*abs((cpcheck - self.cp["cold"])/self.cp["cold"]):.2f}%")
 
             # Solve hot stream equation
-            if len([d["name"] for d in self.hot_unknowns]) == 1:
+            if len(self.hot_unknowns) == 1:
                 self.solveorder += 2
                 
                 # Unknown heat rate
-                if self.hot_unknowns[0]["name"] == "q":
+                if "q" in self.hot_unknowns.keys():
                     
                     # Two phase hot stream
-                    if self.hot_fluid.name == "1233" or "515":
-                        self.hot_hfg = self.hot_fluid.get_properties("T", self.knowns["T_H_o"], ureg.celsius, "Q", 1, ureg.dimensionless)["H"] - self.hot_fluid.get_properties("T", self.knowns["T_H_o"], ureg.celsius, "Q", 0, ureg.dimensionless)["H"]
-                        self.hot_cp = self.hot_fluid.get_properties("T", self.knowns["T_H_o"], ureg.celsius, "Q", 0, ureg.dimensionless)["C"]
-                        self.unknowns["q"] = self.knowns["m_dot_H"] * (self.hot_quality * self.hot_hfg + self.hot_cp * (self.knowns["T_H_i"] - self.knowns["T_H_o"]))
+                    if self.hot_fluid.name in ("1233", "515"):
+                        self.hfg["hot"] = Q_(self.hot_fluid.get_properties("T", self.internal_knowns["T_H_i"].magnitude, ureg.kelvin, "Q", 1, ureg.dimensionless)["H"] - self.hot_fluid.get_properties("T", self.internal_knowns["T_H_i"].magnitude, ureg.kelvin, "Q", 0, ureg.dimensionless)["H"], ureg.joule / ureg.kilogram)
+                        self.unknowns["q"] = self.internal_knowns["m_dot_H"] * self.quality["hot"] * self.hfg["hot"]
 
                     # Single phase hot stream
                     else:
-                        self.hot_cp = self.hot_fluid.get_properties("T", (self.knowns["T_H_i"]+self.knowns["T_H_o"])/2, ureg.celsius, "Q", 0, ureg.dimensionless)["C"]
-                        self.unknowns["q"] = self.knowns["m_dot_H"] * self.hot_cp * (self.knowns["T_H_i"] - self.knowns["T_H_o"])
+                        self.cp["hot"] = Q_(self.hot_fluid.get_properties("T", (self.internal_knowns["T_H_i"].magnitude+self.internal_knowns["T_H_o"].magnitude)/2, ureg.kelvin, "P", 101.3, ureg.kilopascal)["C"], ureg.joule / (ureg.kilogram * ureg.kelvin))
+                        self.unknowns["q"] = self.internal_knowns["m_dot_H"] * self.cp["hot"] * (self.internal_knowns["T_H_i"] - self.internal_knowns["T_H_o"])
                 
                 # Unknown mass flow rate
-                elif self.hot_unknowns[0]["name"] == "m_dot_H":
+                elif "m_dot_H" in self.hot_unknowns.keys():
                     
                     # Two phase hot stream
-                    if self.hot_fluid.name == "1233" or "515":
-                        self.hot_hfg = self.hot_fluid.get_properties("T", self.knowns["T_H_o"], ureg.celsius, "Q", 1, ureg.dimensionless)["H"] - self.hot_fluid.get_properties("T", self.knowns["T_H_o"], ureg.celsius, "Q", 0, ureg.dimensionless)["H"]
-                        self.hot_cp = self.hot_fluid.get_properties("T", self.knowns["T_H_o"], ureg.celsius, "Q", 0, ureg.dimensionless)["C"]
-                        self.unknowns["m_dot_H"] = self.knowns["q"] / (self.hot_quality * self.hot_hfg + self.hot_cp * (self.knowns["T_H_i"] - self.knowns["T_H_o"]))
+                    if self.hot_fluid.name in ("1233", "515"):
+                        self.hfg["hot"] = Q_(self.hot_fluid.get_properties("T", self.internal_knowns["T_H_i"].magnitude, ureg.kelvin, "Q", 1, ureg.dimensionless)["H"] - self.hot_fluid.get_properties("T", self.internal_knowns["T_H_i"].magnitude, ureg.kelvin, "Q", 0, ureg.dimensionless)["H"], ureg.joule / ureg.kilogram)
+                        self.unknowns["m_dot_H"] = self.internal_knowns["q"] / (self.quality["hot"] * self.hfg["hot"])
                     
                     # Single phase hot stream
                     else:
-                        self.hot_cp = self.hot_fluid.get_properties("T", (self.knowns["T_H_i"]+self.knowns["T_H_o"])/2, ureg.celsius, "Q", 0, ureg.dimensionless)["C"]
-                        self.unknowns["m_dot_H"] = self.knowns["q"] / (self.hot_cp * (self.knowns["T_H_i"] - self.knowns["T_H_o"]))
+                        self.cp["hot"] = Q_(self.hot_fluid.get_properties("T", (self.internal_knowns["T_H_i"].magnitude+self.internal_knowns["T_H_o"].magnitude)/2, ureg.kelvin, "P", 101.3, ureg.kilopascal)["C"], ureg.joule / (ureg.kilogram * ureg.kelvin))
+                        self.unknowns["m_dot_H"] = self.internal_knowns["q"] / (self.cp["hot"] * (self.internal_knowns["T_H_i"] - self.internal_knowns["T_H_o"]))
 
                 # Unknown outlet temperature
-                elif self.hot_unknowns[0]["name"] == "T_H_o":
+                elif "T_H_o" in self.hot_unknowns.keys():
                     
                     # Two phase hot stream
-                    if self.hot_fluid.name == "1233" or "515":
-                        self.hot_hfg = self.hot_fluid.get_properties("T", self.knowns["T_H_i"], ureg.celsius, "Q", 1, ureg.dimensionless)["H"] - self.hot_fluid.get_properties("T", self.knowns["T_H_i"], ureg.celsius, "Q", 0, ureg.dimensionless)["H"]
-                        self.hot_cp = self.hot_fluid.get_properties("T", self.knowns["T_H_i"], ureg.celsius, "Q", 0, ureg.dimensionless)["C"]
-                        self.unknowns["T_H_o"] = self.knowns["T_H_i"] - (self.knowns["q"] / self.knowns["m_dot_H"] - self.hot_quality * self.hot_hfg) / self.hot_cp
+                    if self.hot_fluid.name in ("1233", "515"):
+                        self.unknowns["T_H_o"] = self.internal_knowns["T_H_i"]
 
                     # Single phase hot stream
                     else:
-                        self.hot_cp = self.hot_fluid.get_properties("T", self.knowns["T_H_i"], ureg.celsius, "Q", 0, ureg.dimensionless)["C"]
-                        self.unknowns["T_H_o"] = self.knowns["T_H_i"] - self.knowns["q"] / (self.knowns["m_dot_H"] * self.hot_cp)
+                        self.cp["hot"] = Q_(self.hot_fluid.get_properties("T", self.internal_knowns["T_H_i"].magnitude, ureg.kelvin, "P", 101.3, ureg.kilopascal)["C"], ureg.joule / (ureg.kilogram * ureg.kelvin))
+                        self.unknowns["T_H_o"] = self.internal_knowns["T_H_i"] - self.internal_knowns["q"] / (self.internal_knowns["m_dot_H"] * self.cp["hot"])
+                        cpcheck = Q_(self.hot_fluid.get_properties("T", self.unknowns["T_H_o"].magnitude, ureg.kelvin, "P", 101.3, ureg.kilopascal)["C"], ureg.joule / (ureg.kilogram * ureg.kelvin))
+                        if abs((cpcheck - self.cp["hot"])/self.cp["hot"]) > 0.05:
+                            print(f"Warning: Significant change in hot stream specific heat capacity detected. Relative change: {100*abs((cpcheck - self.cp["hot"])/self.cp["hot"]):.2f}%")
 
                 # Unknown inlet temperature
-                elif self.hot_unknowns[0]["name"] == "T_H_i":
+                elif "T_H_i" in self.hot_unknowns.keys():
                     
                     # Two phase hot stream
-                    if self.hot_fluid.name == "1233" or "515":
-                        self.hot_hfg = self.hot_fluid.get_properties("T", self.knowns["T_H_o"], ureg.celsius, "Q", 1, ureg.dimensionless)["H"] - self.hot_fluid.get_properties("T", self.knowns["T_H_o"], ureg.celsius, "Q", 0, ureg.dimensionless)["H"]
-                        self.hot_cp = self.hot_fluid.get_properties("T", self.knowns["T_H_o"], ureg.celsius, "Q", 0, ureg.dimensionless)["C"]
-                        self.unknowns["T_H_i"] = self.knowns["T_H_o"] + (self.knowns["q"] / self.knowns["m_dot_H"] - self.hot_quality * self.hot_hfg) / self.hot_cp
+                    if self.hot_fluid.name in ("1233", "515"):
+                        self.unknowns["T_H_i"] = self.internal_knowns["T_H_o"]
 
                     # Single phase hot stream
                     else:
-                        self.hot_cp = self.hot_fluid.get_properties("T", self.knowns["T_H_i"], ureg.celsius, "Q", 0, ureg.dimensionless)["C"]
-                        self.unknowns["T_H_i"] = self.knowns["T_H_o"] + self.knowns["q"] / (self.knowns["m_dot_H"] * self.hot_cp)
+                        self.cp["hot"] = Q_(self.hot_fluid.get_properties("T", self.internal_knowns["T_H_o"].magnitude, ureg.kelvin, "P", 101.3, ureg.kilopascal)["C"], ureg.joule / (ureg.kilogram * ureg.kelvin))
+                        self.unknowns["T_H_i"] = self.internal_knowns["T_H_o"] + self.internal_knowns["q"] / (self.internal_knowns["m_dot_H"] * self.cp["hot"])
+                        cpcheck = Q_(self.hot_fluid.get_properties("T", self.internal_knowns["T_H_i"].magnitude, ureg.kelvin, "P", 101.3, ureg.kilopascal)["C"], ureg.joule / (ureg.kilogram * ureg.kelvin))
+                        if abs((cpcheck - self.cp["hot"])/self.cp["hot"]) > 0.05:
+                            print(f"Warning: Significant change in hot stream specific heat capacity detected. Relative change: {100*abs((cpcheck - self.cp["hot"])/self.cp["hot"]):.2f}%")
 
             self.update_knowns()
             print(f"Solveorder: {self.solveorder}")
 
-            # Solveorder 1 or 2 indicates one stream was solved and the other has two unknowns remaining. Must use effectiveness equation.
+            # Solveorder 1 or 2 indicates one stream was solved and the other has two unknowns remaining. Must use effectiveness equation.                
             if self.solveorder in [1,2]:
-                self.CMIN = min(self.knowns["m_dot_H"] * self.hot_cp, self.knowns["m_dot_C"] * self.cold_cp)
-                self.CR = self.CMIN / max(self.knowns["m_dot_H"] * self.hot_cp, self.knowns["m_dot_C"] * self.cold_cp)
-                self.NTU = self.knowns["UA"] / self.CMIN
+                self.CHOT = Q_(self.internal_knowns["m_dot_H"] * self.cp["hot"] if self.cold_fluid.name not in ("1233", "515") else 9.999e99, ureg.watt / ureg.kelvin)
+                self.CCOLD = Q_(self.internal_knowns["m_dot_C"] * self.cp["cold"] if self.hot_fluid.name not in ("1233", "515") else 9.999e99, ureg.watt / ureg.kelvin)
+                self.CMIN = min(self.CHOT, self.CCOLD)
+                self.CR = self.CMIN / max(self.CHOT, self.CCOLD)
+                self.NTU = self.internal_knowns["UA"] / self.CMIN
                 self.epsilon = eff(self.configuration, self.CR, self.NTU)
 
                 if "T_H_i" in self.unknowns:
-                    self.unknowns["T_H_i"] = self.knowns["T_C_i"] + self.knowns["q"] / (self.CMIN * self.epsilon)
-                    self.unknowns["T_H_o"] = self.unknowns["T_H_i"] - self.knowns["q"] / (self.knowns["m_dot_H"] * self.hot_cp)
-                    self.update_knowns()
+                    self.unknowns["T_H_i"] = self.internal_knowns["T_C_i"] + self.internal_knowns["q"] / (self.CMIN * self.epsilon)
+                    self.cp["hot"] = Q_(self.hot_fluid.get_properties("T", self.unknowns["T_H_i"].magnitude, ureg.kelvin, "P", 101.3, ureg.kilopascal)["C"], ureg.joule / (ureg.kilogram * ureg.kelvin)) if self.hot_fluid.name not in ("1233", "515") else None
+                    self.unknowns["T_H_o"] = self.unknowns["T_H_i"] - self.internal_knowns["q"] / (self.internal_knowns["m_dot_H"] * self.cp["hot"]) if self.hot_fluid.name not in ("1233", "515") else self.internal_knowns["T_H_i"]
                 elif "T_C_i" in self.unknowns:
-                    self.unknowns["T_C_i"] = self.knowns["T_H_i"] - self.knowns["q"] / (self.CMIN * self.epsilon)
-                    self.unknowns["T_C_o"] = self.unknowns["T_C_i"] + self.knowns["q"] / (self.knowns["m_dot_C"] * self.cold_cp)
-                    self.update_knowns()
+                    self.unknowns["T_C_i"] = self.internal_knowns["T_H_i"] - self.internal_knowns["q"] / (self.CMIN * self.epsilon)
+                    print(self.unknowns["T_C_i"], self.internal_knowns["T_H_i"], self.internal_knowns["q"], self.CMIN, self.epsilon)
+                    self.cp["cold"] = Q_(self.cold_fluid.get_properties("T", self.unknowns["T_C_i"].magnitude, ureg.kelvin, "P", 101.3, ureg.kilopascal)["C"], ureg.joule / (ureg.kilogram * ureg.kelvin)) if self.cold_fluid.name not in ("1233", "515") else None
+                    self.unknowns["T_C_o"] = self.unknowns["T_C_i"] + self.internal_knowns["q"] / (self.internal_knowns["m_dot_C"] * self.cp["cold"]) if self.cold_fluid.name not in ("1233", "515") else self.internal_knowns["T_C_i"]
+                self.update_knowns()
             else:
                 raise ValueError("Solver failed due to invalid solveorder. This error should not be reachable.")
             
             if len(self.unknowns) > 0:
                 raise ValueError("Unknowns remain after running e-NTU solver. This error should not be reachable. Remaining unknowns:", self.unknowns)
             
-            return self.knowns
+            return self.internal_knowns
             
         else:
             raise NotImplementedError("LMTD method not yet implemented.")
@@ -285,8 +281,8 @@ if __name__ == "__main__":
     
     knowns = [
         ("T_H_i", 50, ureg.degC),
-        ("m_dot_C", 0.1, ureg.kilogram / ureg.second),
-        ("m_dot_H", 0.1, ureg.kilogram / ureg.second),
+        ("m_dot_C", 10, ureg.kilogram / ureg.second),
+        ("m_dot_H", 10, ureg.kilogram / ureg.second),
         #("T_C_i", 20, ureg.degC),
         #("T_C_o", 30, ureg.degC),
         ("UA", 5, ureg.watt / ureg.kelvin),
