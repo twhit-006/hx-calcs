@@ -30,7 +30,8 @@ class fluid:
         self.fluids = {
             "1233": "R1233zd(E)",
             "pg25": "INCOMP::APG-25%",
-            "water": "Water"
+            "water": "Water",
+            "air": "Air"
         }
         
         # R515b needs REFPROP and a custom mixture file to work properly, but approximate

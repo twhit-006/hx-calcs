@@ -272,7 +272,7 @@ class HeatExchanger:
             return self.internal_knowns
             
         else:
-            raise NotImplementedError("LMTD method not yet implemented.")
+            raise NotImplementedError("LMTD method not yet implemented. Please proved UA as a known parameter to use e-NTU method.")
 
 if __name__ == "__main__":
     cold_fluid = "pg25"
