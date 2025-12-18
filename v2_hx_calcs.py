@@ -35,8 +35,8 @@ class HeatExchanger:
         }
         self.errors = []
         self.step = "Initial"
-        self.knowntemps_C = True if "T_i_C" and "T_o_C" in self.knowns.keys() else False
-        self.knowntemps_H = True if "T_i_H" and "T_o_H" in self.knowns.keys() else False
+        self.knowntemps_C = True if ("T_i_C" in self.knowns.keys()) and ("T_o_C" in self.knowns.keys()) else False
+        self.knowntemps_H = True if ("T_i_H" in self.knowns.keys()) and ("T_o_H" in self.knowns.keys()) else False
 
         self.internal_units = {
             "T": ureg.kelvin,
@@ -142,14 +142,19 @@ class HeatExchanger:
         # Run the solution workflow in stages so each routine has the data it needs.
         self.step = "First Stream"
         self.first_stream_solver()
+        print(self.internal_knowns)
         self.step = "Phase Contributions"
         self.phase_contributions()
+        print(self.internal_knowns)
         self.step = "Stream Discretization"
         self.stream_discretizer()
+        print(self.internal_knowns)
         self.step = "Heat Exchanger Equations"
         self.heatexchanger_funcs()
+        print(self.internal_knowns)
         self.step = "Second Stream"
         self.second_stream_solver()
+        print(self.internal_knowns)
         self.step = "Print"
         self.print_errors()
         self.print_results()
@@ -257,7 +262,10 @@ class HeatExchanger:
         # Representative temperature & delta-T for property lookups
         if T_i is not None and T_o is not None:
             T_props = Q_(np.mean([T_i.magnitude, T_o.magnitude]),ureg.kelvin)
-            T_dif = abs(T_o - T_i)
+            if suffix == "_H":
+                T_dif = T_i - T_o
+            else:
+                T_dif = T_o - T_i
         else:
             # only one temperature known -> use it for cp/hfg lookups
             T_props = Q_(T_i or T_o,ureg.kelvin)
@@ -371,13 +379,14 @@ class HeatExchanger:
             self.q_1p_C = self.internal_knowns["q"] - self.q_2p_C
             self.q_1p_H = self.internal_knowns["q"] - self.q_2p_H
 
+           
             self.q_1p = Q_(min(self.q_1p_C.magnitude, self.q_1p_H.magnitude), ureg.watt)
             self.q_1p2p = Q_(abs(self.q_1p_C.magnitude - self.q_1p_H.magnitude), ureg.watt)
             self.q_2p = Q_(max(self.q_2p_C.magnitude, self.q_2p_H.magnitude), ureg.watt)
 
-            if self.q_1p < 0:
+            if self.q_1p_C < 0 or self.q_1p_C < 0:
                 raise ValueError(f"Two-phase contribution larger than total heat load. q_2p: {self.q_2p:.0} q: {self.internal_knowns["q"]:.0}")
-                
+ 
     def stream_discretizer(self):
         """Create intra-stream sections so that each region satisfies e-NTU."""
         if self.solver == "e-NTU":
@@ -595,7 +604,7 @@ class HeatExchanger:
                 # Two phase portion
                 if self.mode == "2P-2P":
                     T_i_H_2p = self.internal_knowns["T_i_C_2p"] - self.q_2p / self.internal_knowns["UA"]
-                    if T_i_H_2p > self.internal_knowns["T_i_C_2p"]:
+                    if T_i_H_2p < self.internal_knowns["T_i_C_2p"]:
                         raise ValueError("PINCH ERROR: Calculated hot inlet temperature in two-phase section exceeds cold inlet temperature.")
 
                 self.internal_knowns.update({"T_i_H_1p": T_i_H_1p})
