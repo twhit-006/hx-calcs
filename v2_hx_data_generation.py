@@ -9,6 +9,7 @@ Q_ = ureg.Quantity
 # User Inputs
 ################################################################################
 
+# Fluid options and operating points to sweep.
 FAC_FLUIDS = ("air", "pg25", "515")
 IT_FLUIDS = ("pg25", "515")
 POWER = (100, 250, 500, 1000)
@@ -18,6 +19,8 @@ TWO_PHASE_NAMES = {"515"}
 COLD_QUALITY = 0.7
 HOT_QUALITY = 0.7
 T_APPROACH = 3 # C. Desired approach temperature between IT and Facility.
+DT_1P = 10 # C. Allowed temperature rise of a single phase stream.
+DT_2P = 5 # C. Allowed temperature rise of a two phase stream. Equal to inlet subcooling.
 # When True, skip the prompt and always save results to CSV.
 AUTO_SAVE = True
 
@@ -51,6 +54,7 @@ it_input = [
     ("x_H", HOT_QUALITY, ureg.dimensionless),
 ]
 
+# Sweep all combinations of facility/IT fluids, loads, and inlet temperatures.
 for fac_f in FAC_FLUIDS:
     for it_f in IT_FLUIDS:
         for heat_rate in POWER:
@@ -63,7 +67,7 @@ for fac_f in FAC_FLUIDS:
                 it_input[0] = ("fluid_it", it_f, None)
                 it_input[4] = ("x_H", HOT_QUALITY, ureg.dimensionless)
 
-
+                # Build fluid objects and pick representative temperature for property lookups.
                 fluid_name_fac = fac_input[0][1]
                 fluid_name_it = it_input[0][1]
                 fluid_fac = fp.fluid(fluid_name_fac)
@@ -71,9 +75,10 @@ for fac_f in FAC_FLUIDS:
                 two_phase_fac = two_phase_check(fluid_name_fac)
                 two_phase_it = two_phase_check(fluid_name_it)
                 T_props = fac_input[1][1] or fac_input[2][1] or it_input[1][1] or fac_input[2][1]
-                dT_fac = Q_(5,ureg.kelvin) if two_phase_fac else Q_(10, ureg.kelvin)
-                dT_it = Q_(5,ureg.kelvin) if two_phase_it else Q_(10, ureg.kelvin)
+                dT_fac = Q_(DT_2P,ureg.kelvin) if two_phase_fac else Q_(DT_1P, ureg.kelvin)
+                dT_it = Q_(DT_2P,ureg.kelvin) if two_phase_it else Q_(DT_1P, ureg.kelvin)
 
+                # Look up approximate properties from single known temperature to calculate a mass flow rate.
                 if two_phase_fac:
                     cp_val_fac = fluid_fac.get_properties("T", T_props, ureg.celsius, "Q", 0, ureg.dimensionless)["C"]
                     cp_fac = Q_(cp_val_fac, ureg.joule / (ureg.kilogram * ureg.kelvin))
@@ -95,16 +100,18 @@ for fac_f in FAC_FLUIDS:
                     cp_it = Q_(cp_val_it, ureg.joule / (ureg.kilogram * ureg.kelvin))
                     hfg_it = Q_(0, ureg.joule / ureg.kilogram)
 
+                # Bring in other parameters necessary to calculate mass flow rate in the correct units.
                 q = Q_(sys_input[1][1]*1000,ureg.watt)
                 x_C = Q_(fac_input[4][1],ureg.dimensionless)
                 x_H = Q_(it_input[4][1],ureg.dimensionless)
 
-
+                # Estimate required mass flow rates based on target load and chosen temperature lifts.
                 m_dot_fac = q/(cp_fac*dT_fac + x_C * hfg_fac)
                 m_dot_it = q/(cp_it*dT_it + x_H * hfg_it)
                 fac_input[3] = ("m_dot_C", m_dot_fac.magnitude, ureg.kilogram / ureg.second)
                 it_input[3] = ("m_dot_H", m_dot_it.magnitude, ureg.kilogram / ureg.second)
 
+                # Remove single phase qualities as expected by HeatExchanger class.
                 if not two_phase_fac:
                     fac_input[4] = ("x_C", None, ureg.dimensionless)
                 if not two_phase_it:
@@ -113,10 +120,12 @@ for fac_f in FAC_FLUIDS:
                 # Instantiate and display knowns for quick manual verification.
                 hx = HeatExchanger(sys_input, fac_input, it_input, out_print=True)
 
+                # Set up iteration variables.
                 max_iter = 200
                 i = 0
                 approach = 200
 
+                # Iterate on UA until the approach temperature converges to the target.
                 while abs(approach-T_APPROACH)/T_APPROACH > 0.02:
                     cold_approach = (hx.internal_knowns["T_o_H"] - hx.internal_knowns["T_i_C"]).magnitude
                     hot_approach = (hx.internal_knowns["T_i_H"] - hx.internal_knowns["T_o_C"]).magnitude
@@ -137,8 +146,7 @@ for fac_f in FAC_FLUIDS:
                     hx = HeatExchanger(sys_input, fac_input, it_input, out_print=True)
                     i += 1
                     if i >= max_iter:
-                        print(f"Max iterations reached searching for UA. UA:{UA_updated}, approach ratio: {approach/T_APPROACH}")
-                        break
+                        raise ValueError(f"Max iterations reached searching for UA. UA:{UA_updated}, approach ratio: {approach/T_APPROACH}")
 
                 print(f"Approach: {approach:.3} °C, Iterations: {i}")
 

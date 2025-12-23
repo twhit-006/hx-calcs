@@ -5,40 +5,41 @@ import numpy as np
 from unit_conversion import unit_conversion as unit_conv
 from effectiveness import effectiveness as eff
 import pint
-from sympy import symbols, Eq, solve
 
 ureg = pint.UnitRegistry()
 Q_ = ureg.Quantity
 
 TWO_PHASE_FLUIDS = {"1233", "515", "1234"}
 
-
 def is_two_phase_label(label: str) -> bool:
     """Return True when the provided fluid label represents a two-phase fluid."""
     return label in TWO_PHASE_FLUIDS
-
 
 class HeatExchanger:
     """Encapsulates heat exchanger calculations for both 1P and 2P streams."""
 
     def __init__(self, sys_input, fac_input, it_input, out_print=False):
         """Normalize user inputs, categorize phases, and kick off solving routine."""
+        # Capture raw user inputs and the associated fluid objects.
         self.hot_name = it_input[0][1]
         self.cold_name = fac_input[0][1]
         self.hot_fluid = fp.fluid(it_input[0][1])
         self.cold_fluid = fp.fluid(fac_input[0][1])
         self.configuration = "counterflow"
         self.out_print = out_print
+        # Track only populated parameters (exclude fluid labels) and convert to pint quantities.
         self.knowns = {
             p: Q_(v, u)
             for (p, v, u) in (fac_input + it_input + sys_input)
             if v is not None and not p.startswith("fluid_")
         }
         self.errors = []
-        self.step = "Initial"
+        self.step = "Initialize"
+        # Note which streams have both inlet/outlet temperatures pre-specified.
         self.knowntemps_C = True if ("T_i_C" in self.knowns.keys()) and ("T_o_C" in self.knowns.keys()) else False
         self.knowntemps_H = True if ("T_i_H" in self.knowns.keys()) and ("T_o_H" in self.knowns.keys()) else False
 
+        # List internal base units to convert to for easy calculations.
         self.internal_units = {
             "T": ureg.kelvin,
             "q": ureg.watt,
@@ -47,6 +48,7 @@ class HeatExchanger:
             "x": ureg.dimensionless
         }
 
+        # Full list of heat exchanger parameters used.
         self.HX_parameters = {
             "q": "",       # Heat rate
             "T_i_H": "",   # Hot fluid inlet temperature
@@ -60,21 +62,28 @@ class HeatExchanger:
             "x_C": ""      # Cold fluid quality
         }
 
+        # Convert inputs to internal units.
         self.unit_conv_knowns()
 
+        # Set up total unknowns and stream-specific unknowns.
         self.hot_stream_parameters = ["q", "T_i_H", "T_o_H", "m_dot_H", "x_H"]
         self.cold_stream_parameters = ["q", "T_i_C", "T_o_C", "m_dot_C", "x_C"]
         self.unknowns = {p: None for p in self.HX_parameters.keys() if p not in self.knowns_list}
         self.cold_unknowns = {p: None for p in self.cold_stream_parameters if p in self.unknowns}
         self.hot_unknowns = {p: None for p in self.hot_stream_parameters if p in self.unknowns}
 
-        # Assign heat exchanger mode based on fluid types and check for appropriate number of knowns.
-        fluids_2ph = ['515', '1233']  # reference list maintained for documentation parity
-        fluids_1ph = ['water', 'pg25', 'air']
-
+        # Determine fluid type of each stream.
         self.two_phase_hot = is_two_phase_label(self.hot_name)
         self.two_phase_cold = is_two_phase_label(self.cold_name)
 
+        # Mode determines how qualities are handled and which unknowns are valid.
+        # ATTENTION: mode refers to each stream of the heat exchanger in general and whether they
+        # are refrigerants. The first index refers to the facility stream (cold) and the second
+        # index refers to the IT stream (hot). For example, the index '1P-2P' refers to a heat
+        # exchanger with a single phase fluid on the facility side and a refrigerant on the IT side.
+        # Later in the script, suffixes are added to variables like 1p, 1p2p, 2p. These suffix tags
+        # refer to the discretized section of the heat exchanger and what phase the fluid in either
+        # stream is in within that section.
         if self.two_phase_cold and self.two_phase_hot:
             self.mode = '2P-2P'
         elif not self.two_phase_cold and not self.two_phase_hot:
@@ -96,6 +105,7 @@ class HeatExchanger:
         if self.out_print == True:
             print(f"Heat exchanger mode set to: {self.mode}")
 
+        # Validate the input set before solving.
         # CHECK #1: Exactly 3 unknown parameters
         if len(self.unknowns) != 3:
             raise ValueError(f"Exactly 3 unknown parameters required, {len(self.unknowns)} unkowns determined: {self.unknowns.keys()}")
@@ -142,6 +152,7 @@ class HeatExchanger:
                 raise ValueError("UA must be greater than zero.")
         
         # Run the solution workflow in stages so each routine has the data it needs.
+        # The step attribute is helpful when surfacing errors back to the caller.
         self.step = "First Stream"
         self.first_stream_solver()
         #print(self.internal_knowns)
@@ -195,7 +206,7 @@ class HeatExchanger:
         self.knowns_list = list(self.internal_knowns.keys())
 
     def prop_calcs(self, T_props, fluid):
-        # cp and hfg (note the .magnitude)
+        """Calculate fluid properties based on fluid name, type, and temperature."""
         if fluid is self.hot_fluid:
             two_phase = self.two_phase_hot
         else:
@@ -219,10 +230,13 @@ class HeatExchanger:
         if len(unknowns) != 1:
             raise TypeError(f"stream_funcs was given an incorrect number of unknowns. unknowns list: {unknowns}")
         
+        # Identify which temperature terms belong to the current unknown and align
+        # with the corresponding inlet/outlet/phase suffixes.
         unknown_keystr = list(unknowns.keys())[0]
         matches = [k for k in knowns if "T_" in k]
         known_keystr = matches[0]
 
+        # Determine which parameters and suffixes are appropriate for use in the stream function
         if "_C" in unknown_keystr:
             if "T_i" in unknown_keystr:
                 T_i_key = f"T_i_C{unknown_keystr[5:]}"
@@ -320,6 +334,7 @@ class HeatExchanger:
         """Solve whichever stream equation has a single unknown."""
         if self.solver == "e-NTU":
 
+            # Use the stream with only one missing term to seed the rest of the solution.
             # Solve cold stream equation
             if len(self.cold_unknowns) == 1:
                 fluid = self.cold_fluid
@@ -342,6 +357,7 @@ class HeatExchanger:
             else:
                 raise ValueError("No solveable stream equation found for e-NTU method.")
             
+            # Run stream_funcs and update knowns.
             solved_unknown = self.stream_funcs(fluid, knowns, unknowns)
             self.unknowns.update(solved_unknown)
             self.update_knowns()
@@ -349,7 +365,7 @@ class HeatExchanger:
     def phase_contributions(self):
         """Break total duty into single-phase and two-phase components."""
         if self.solver == "e-NTU":
-            # Determine temperature for property calculations
+            # Choose representative temperatures for property lookups on each side.
             if "T_o_C" not in self.cold_unknowns.keys() and "T_i_C" not in self.cold_unknowns.keys():
                 T_props_C = Q_(np.mean([self.internal_knowns["T_o_C"].magnitude, self.internal_knowns["T_i_C"].magnitude]),ureg.kelvin)
             elif "T_o_C" in self.cold_unknowns.keys() and "T_i_C" in self.cold_unknowns.keys():
@@ -366,14 +382,14 @@ class HeatExchanger:
             else:
                 T_props_H = self.internal_knowns["T_i_H"] if "T_i_H" in self.internal_knowns else self.internal_knowns["T_o_H"]
             
-            # Fluid specific calculations
+            # Property lookup
             cp_C, hfg_C = self.prop_calcs(T_props_C, self.cold_fluid)
             cp_H, hfg_H = self.prop_calcs(T_props_H, self.hot_fluid)
             
             self.CHOT = self.internal_knowns["m_dot_H"] * cp_H
             self.CCOLD = self.internal_knowns["m_dot_C"] * cp_C
 
-            # Determine single phase and two phase contributions            
+            # Determine single phase and two phase contributions
             if self.mode == "2P-2P":
                 self.q_2p_C = self.internal_knowns["m_dot_C"] * self.internal_knowns["x_C"] * hfg_C
                 self.q_2p_H = self.internal_knowns["m_dot_H"] * self.internal_knowns["x_H"] * hfg_H
@@ -390,7 +406,7 @@ class HeatExchanger:
             self.q_1p_C = self.internal_knowns["q"] - self.q_2p_C
             self.q_1p_H = self.internal_knowns["q"] - self.q_2p_H
 
-           
+            # Split the total heat into single-phase, mixed, and two-phase portions for NTU handling.
             self.q_1p = Q_(min(self.q_1p_C.magnitude, self.q_1p_H.magnitude), ureg.watt)
             self.q_1p2p = Q_(abs(self.q_1p_C.magnitude - self.q_1p_H.magnitude), ureg.watt)
             self.q_2p = Q_(max(self.q_2p_C.magnitude, self.q_2p_H.magnitude), ureg.watt)
@@ -401,6 +417,7 @@ class HeatExchanger:
     def stream_discretizer(self):
         """Create intra-stream sections so that each region satisfies e-NTU."""
         if self.solver == "e-NTU":
+            # Split the already-balanced stream into single-phase and mixed/isothermal sections.
             # Determine whether the cold or hot side already has a closed energy balance.
             if len(self.cold_unknowns) == 0:
                 # Discretizing known cold stream, build knowns array for single phase portion of cold stream.
@@ -453,7 +470,7 @@ class HeatExchanger:
                     self.internal_knowns.update(self.stream_funcs(self.cold_fluid, knowns_1p2p, unknowns_1p2p))
                     
                     if self.mode == "2P-2P":
-                        # For a 2P-2P heat exchanger, just add an additional isothermal temperature node.
+                        # For a 2P-2P heat exchanger, just add an additional isothermal temperature segment.
                         self.internal_knowns.update({"T_i_C_2p": self.internal_knowns["T_o_C"]})
                         # Calculate absolute error between calculated exit temp and known exit temp.
                         if abs(self.internal_knowns["T_o_C"].magnitude - self.internal_knowns["T_o_C_1p2p"].magnitude) / self.internal_knowns["T_o_C"].magnitude > 0.05:
@@ -523,6 +540,7 @@ class HeatExchanger:
         """Apply effectiveness-NTU relationships to solve inlet temperatures."""
         if self.solver == "e-NTU":
             
+            # Depending on which inlet temperature is unknown, traverse the 1P, 1P-2P, or 2P segments.
             if "T_i_C" in self.unknowns:
                 if self.mode == "1P-1P":
                     required = ["T_i_H_1p"]
@@ -674,6 +692,7 @@ class HeatExchanger:
     def second_stream_solver(self):
         """Complete the second stream by back-substituting new temperatures."""
         if self.solver == "e-NTU":
+            # Finish by calculating the outlet of whichever side remained unknown after NTU solve.
             if "T_o_C" in self.unknowns:
                 cp, hfg = self.prop_calcs(self.internal_knowns["T_i_C"], self.cold_fluid)
 
@@ -687,7 +706,7 @@ class HeatExchanger:
             
             elif "T_o_H" in self.unknowns:
                 cp, hfg = self.prop_calcs(self.internal_knowns["T_i_H"], self.hot_fluid)
-                       
+
                 if not self.two_phase_hot:
                     hfg = Q_(0, ureg.joule / ureg.kilogram)
                     self.internal_knowns["x_H"] = Q_(0, ureg.dimensionless)
