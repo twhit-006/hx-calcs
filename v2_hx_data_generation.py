@@ -22,7 +22,7 @@ T_APPROACH = 3 # C. Desired approach temperature between IT and Facility.
 DT_1P = 10 # C. Allowed temperature rise of a single phase stream.
 DT_2P = 5 # C. Allowed temperature rise of a two phase stream. Equal to inlet subcooling.
 # When True, skip the prompt and always save results to CSV.
-AUTO_SAVE = True
+AUTO_SAVE = False
 
 ################################################################################
 
@@ -135,13 +135,10 @@ for fac_f in FAC_FLUIDS:
                         int_approach_1p = (hx.internal_knowns["T_i_H_1p"] - hx.internal_knowns["T_o_C_1p"]).magnitude
                         int_approach_1p2p = (hx.internal_knowns["T_i_H_1p2p"] - hx.internal_knowns["T_o_C_1p2p"]).magnitude
                         approach = min(cold_approach,hot_approach,int_approach_1p,int_approach_1p2p)
-                    if abs(approach-T_APPROACH)/T_APPROACH > 0.5:
-                        if approach > T_APPROACH:
-                            UA_updated = sys_input[0][1]*(2-((i+1)/(201)))
-                        else:
-                            UA_updated = sys_input[0][1]*(0.5+((i+1)/(402)))
+                    if approach > T_APPROACH:
+                        UA_updated = sys_input[0][1]*(2-((i+1)/(201)))
                     else:
-                        UA_updated = sys_input[0][1]*approach/T_APPROACH
+                        UA_updated = sys_input[0][1]*(0.5+((i+1)/(402)))
                     sys_input[0] = ("UA", UA_updated, ureg.watt / ureg.kelvin)
                     hx = HeatExchanger(sys_input, fac_input, it_input, out_print=True)
                     i += 1

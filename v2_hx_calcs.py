@@ -789,20 +789,20 @@ if __name__ == "__main__":
 
     # Facility Side Input Parameters
     fac_input = [
-        ("fluid_facility", "515", None),
+        ("fluid_facility", "pg25", None),
         ("T_i_C", 10, ureg.degC),
         ("T_o_C", None, ureg.degC),
-        ("m_dot_C", 1.09, ureg.kilogram / ureg.second),
-        ("x_C", 0.7, ureg.dimensionless),
+        ("m_dot_C", 6.39, ureg.kilogram / ureg.second),
+        ("x_C", None, ureg.dimensionless),
     ]
 
     # IT Side Input Parameters
     it_input = [
-        ("fluid_it", "pg25", None),
+        ("fluid_it", "515", None),
         ("T_i_H", None, ureg.degC),
         ("T_o_H", None, ureg.degC),
         ("m_dot_H", 2.57, ureg.kilogram / ureg.second),
-        ("x_H", None, ureg.dimensionless),
+        ("x_H", 0.58, ureg.dimensionless),
     ]
     
     # Instantiate and display knowns for quick manual verification.
