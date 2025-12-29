@@ -25,7 +25,7 @@ class HeatExchanger:
         self.cold_name = fac_input[0][1]
         self.hot_fluid = fp.fluid(it_input[0][1])
         self.cold_fluid = fp.fluid(fac_input[0][1])
-        self.configuration = "counterflow"
+        self.configuration = "crossflow" if "air" in self.cold_name else "counterflow"
         self.out_print = out_print
         # Track only populated parameters (exclude fluid labels) and convert to pint quantities.
         self.knowns = {
@@ -369,7 +369,7 @@ class HeatExchanger:
             if "T_o_C" not in self.cold_unknowns.keys() and "T_i_C" not in self.cold_unknowns.keys():
                 T_props_C = Q_(np.mean([self.internal_knowns["T_o_C"].magnitude, self.internal_knowns["T_i_C"].magnitude]),ureg.kelvin)
             elif "T_o_C" in self.cold_unknowns.keys() and "T_i_C" in self.cold_unknowns.keys():
-                T_props_C = Q_(np.mean([self.internal_knowns["T_o_H"].magnitude, self.internal_knowns["T_i_H"].magnitude]),ureg.kelvin)
+                T_props_C = Q_(self.internal_knowns["T_o_H"].magnitude,ureg.kelvin)
                 self.errors.append("phasecont_error_cold")
             else:
                 T_props_C = self.internal_knowns["T_i_C"] if "T_i_C" in self.internal_knowns else self.internal_knowns["T_o_C"]
@@ -377,7 +377,7 @@ class HeatExchanger:
             if "T_o_H" not in self.hot_unknowns.keys() and "T_i_H" not in self.hot_unknowns.keys():
                 T_props_H = Q_(np.mean([self.internal_knowns["T_o_H"].magnitude, self.internal_knowns["T_i_H"].magnitude]),ureg.kelvin)
             elif "T_o_H" in self.hot_unknowns.keys() and "T_i_H" in self.hot_unknowns.keys():
-                T_props_H = Q_(np.mean([self.internal_knowns["T_o_C"].magnitude, self.internal_knowns["T_i_C"].magnitude]),ureg.kelvin)
+                T_props_H = Q_(self.internal_knowns["T_o_C"].magnitude,ureg.kelvin)
                 self.errors.append("phasecont_error_hot")
             else:
                 T_props_H = self.internal_knowns["T_i_H"] if "T_i_H" in self.internal_knowns else self.internal_knowns["T_o_H"]
@@ -703,6 +703,8 @@ class HeatExchanger:
                 self.unknowns["T_o_C"] = self.internal_knowns["T_i_C"] + (
                     self.internal_knowns["q"] / self.internal_knowns["m_dot_C"] - self.internal_knowns["x_C"] * hfg
                 ) / cp
+                if self.mode != "1P-1P":
+                    self.internal_knowns.update({"T_o_C_1p2p": self.unknowns["T_o_C"]})
             
             elif "T_o_H" in self.unknowns:
                 cp, hfg = self.prop_calcs(self.internal_knowns["T_i_H"], self.hot_fluid)
@@ -724,7 +726,7 @@ class HeatExchanger:
         
         if "phasecont_error_cold" in self.errors:
             print("WARNING: Unknown temperatures in cold stream during phase contribution calculations. Hot stream temps used for property evals.")
-            T_err = Q_(np.mean([self.internal_knowns["T_o_H"].magnitude, self.internal_knowns["T_i_H"].magnitude]),ureg.kelvin)
+            T_err = self.internal_knowns["T_o_H"]
             T_calc = Q_(np.mean([self.internal_knowns["T_o_C"].magnitude, self.internal_knowns["T_i_C"].magnitude]),ureg.kelvin)
             
             cp_err, hfg_err = self.prop_calcs(T_err, self.cold_fluid)
@@ -739,7 +741,7 @@ class HeatExchanger:
 
         if "phasecont_error_hot" in self.errors:
             print("WARNING: Unknown temperatures in hot stream during phase contribution calculations. Cold stream temps used for property evals.")
-            T_err = Q_(np.mean([self.internal_knowns["T_o_C"].magnitude, self.internal_knowns["T_i_C"].magnitude]),ureg.kelvin)
+            T_err = self.internal_knowns["T_o_C"]
             T_calc = Q_(np.mean([self.internal_knowns["T_o_H"].magnitude, self.internal_knowns["T_i_H"].magnitude]),ureg.kelvin)
 
         cp_err, hfg_err  = self.prop_calcs(T_err, self.hot_fluid)
@@ -783,16 +785,16 @@ if __name__ == "__main__":
     ################################################################################
     # System Input Parameters
     sys_input = [
-        ("UA", 5000, ureg.watt / ureg.kelvin),
-        ("q", 100, ureg.kilowatt),
+        ("UA", 10000, ureg.watt / ureg.kelvin),
+        ("q", 26.5, ureg.kilowatt),
     ]
 
     # Facility Side Input Parameters
     fac_input = [
-        ("fluid_facility", "pg25", None),
-        ("T_i_C", 10, ureg.degC),
+        ("fluid_facility", "air", None),
+        ("T_i_C", 24.1, ureg.degC),
         ("T_o_C", None, ureg.degC),
-        ("m_dot_C", 6.39, ureg.kilogram / ureg.second),
+        ("m_dot_C", 2.65, ureg.kilogram / ureg.second),
         ("x_C", None, ureg.dimensionless),
     ]
 
@@ -801,8 +803,8 @@ if __name__ == "__main__":
         ("fluid_it", "515", None),
         ("T_i_H", None, ureg.degC),
         ("T_o_H", None, ureg.degC),
-        ("m_dot_H", 2.57, ureg.kilogram / ureg.second),
-        ("x_H", 0.58, ureg.dimensionless),
+        ("m_dot_H", 0.23, ureg.kilogram / ureg.second),
+        ("x_H", 0.637, ureg.dimensionless),
     ]
     
     # Instantiate and display knowns for quick manual verification.

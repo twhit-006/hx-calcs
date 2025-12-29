@@ -2,6 +2,7 @@ from v2_hx_calcs import HeatExchanger, ureg
 import fluid_properties as fp
 import csv
 import os
+import numpy as np
 
 Q_ = ureg.Quantity
 
@@ -10,17 +11,28 @@ Q_ = ureg.Quantity
 ################################################################################
 
 # Fluid options and operating points to sweep.
-FAC_FLUIDS = ("air", "pg25", "515")
-IT_FLUIDS = ("pg25", "515")
-POWER = (100, 250, 500, 1000)
-T_INLET = (10, 20, 30, 40, 50)
+#FAC_FLUIDS = ("air", "pg25", "515")
+#IT_FLUIDS = ("pg25", "515")
+#POWER = (100, 250, 500, 1000)
+#T_INLET = (10, 20, 30, 40, 50)
+
+# Optional single input test
+FAC_FLUIDS = ("air",)
+IT_FLUIDS = ("515",)
+POWER = (127.2,)
+T_INLET = (31.4,)
 
 TWO_PHASE_NAMES = {"515"}
 COLD_QUALITY = 0.7
 HOT_QUALITY = 0.7
-T_APPROACH = 3 # C. Desired approach temperature between IT and Facility.
-DT_1P = 10 # C. Allowed temperature rise of a single phase stream.
-DT_2P = 5 # C. Allowed temperature rise of a two phase stream. Equal to inlet subcooling.
+T_APPROACH = 1.2 # C. Desired approach temperature between IT and Facility.
+
+# Flow rate control. SET EITHER DT OR MDOT. Defaults to mdot if both are set.
+DT_1P = 21.2 # C. Allowed temperature rise of a single phase stream.
+DT_2P = 0 # C. Allowed temperature rise of a two phase stream. Equal to inlet subcooling.
+#m_dot_fac = Q_(357.6 * (1025/60000), ureg.kilogram / ureg.second) # kg/s. Faility mass flow rate
+#m_dot_it = Q_(132 * (1180/60000), ureg.kilogram / ureg.second) # kg/s. Faility mass flow rate
+
 # When True, skip the prompt and always save results to CSV.
 AUTO_SAVE = False
 
@@ -32,7 +44,7 @@ def two_phase_check(label: str) -> bool:
 
 # System Input Parameters
 sys_input = [
-    ("UA", 50000, ureg.watt / ureg.kelvin),
+    ("UA", 10000, ureg.watt / ureg.kelvin),
     ("q", None, ureg.kilowatt),
 ]
 
@@ -106,8 +118,11 @@ for fac_f in FAC_FLUIDS:
                 x_H = Q_(it_input[4][1],ureg.dimensionless)
 
                 # Estimate required mass flow rates based on target load and chosen temperature lifts.
-                m_dot_fac = q/(cp_fac*dT_fac + x_C * hfg_fac)
-                m_dot_it = q/(cp_it*dT_it + x_H * hfg_it)
+                if 'm_dot_fac' not in locals():
+                    m_dot_fac = q/(cp_fac*dT_fac + x_C * hfg_fac)
+                if 'm_dot_it' not in locals():
+                    m_dot_it = q/(cp_it*dT_it + x_H * hfg_it)
+
                 fac_input[3] = ("m_dot_C", m_dot_fac.magnitude, ureg.kilogram / ureg.second)
                 it_input[3] = ("m_dot_H", m_dot_it.magnitude, ureg.kilogram / ureg.second)
 
@@ -121,12 +136,16 @@ for fac_f in FAC_FLUIDS:
                 hx = HeatExchanger(sys_input, fac_input, it_input, out_print=True)
 
                 # Set up iteration variables.
-                max_iter = 200
+                max_iter = 100
                 i = 0
-                approach = 200
+                abs_approach = 1
+                UA_updated = sys_input[0][1]
 
                 # Iterate on UA until the approach temperature converges to the target.
-                while abs(approach-T_APPROACH)/T_APPROACH > 0.02:
+                while abs_approach > 0.02:
+                    sys_input[0] = ("UA", UA_updated, ureg.watt / ureg.kelvin)
+                    hx = HeatExchanger(sys_input, fac_input, it_input, out_print=True)
+
                     cold_approach = (hx.internal_knowns["T_o_H"] - hx.internal_knowns["T_i_C"]).magnitude
                     hot_approach = (hx.internal_knowns["T_i_H"] - hx.internal_knowns["T_o_C"]).magnitude
                     if hx.mode == "1P-1P":
@@ -134,13 +153,14 @@ for fac_f in FAC_FLUIDS:
                     else:
                         int_approach_1p = (hx.internal_knowns["T_i_H_1p"] - hx.internal_knowns["T_o_C_1p"]).magnitude
                         int_approach_1p2p = (hx.internal_knowns["T_i_H_1p2p"] - hx.internal_knowns["T_o_C_1p2p"]).magnitude
+                        print(cold_approach, hot_approach, int_approach_1p, int_approach_1p2p)
                         approach = min(cold_approach,hot_approach,int_approach_1p,int_approach_1p2p)
                     if approach > T_APPROACH:
-                        UA_updated = sys_input[0][1]*(2-((i+1)/(201)))
+                        UA_updated = sys_input[0][1]*(2-((i+1)/(101)))
                     else:
-                        UA_updated = sys_input[0][1]*(0.5+((i+1)/(402)))
-                    sys_input[0] = ("UA", UA_updated, ureg.watt / ureg.kelvin)
-                    hx = HeatExchanger(sys_input, fac_input, it_input, out_print=True)
+                        UA_updated = sys_input[0][1]*(0.5+((i+1)/(201)))
+                    
+                    abs_approach = abs(approach-T_APPROACH)/T_APPROACH
                     i += 1
                     if i >= max_iter:
                         raise ValueError(f"Max iterations reached searching for UA. UA:{UA_updated}, approach ratio: {approach/T_APPROACH}")
