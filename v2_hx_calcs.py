@@ -786,25 +786,25 @@ if __name__ == "__main__":
     # System Input Parameters
     sys_input = [
         ("UA", 10000, ureg.watt / ureg.kelvin),
-        ("q", 26.5, ureg.kilowatt),
+        ("q", 100, ureg.kilowatt),
     ]
 
     # Facility Side Input Parameters
     fac_input = [
         ("fluid_facility", "air", None),
-        ("T_i_C", 24.1, ureg.degC),
+        ("T_i_C", 10, ureg.degC),
         ("T_o_C", None, ureg.degC),
-        ("m_dot_C", 2.65, ureg.kilogram / ureg.second),
+        ("m_dot_C", 9.94, ureg.kilogram / ureg.second),
         ("x_C", None, ureg.dimensionless),
     ]
 
     # IT Side Input Parameters
     it_input = [
-        ("fluid_it", "515", None),
+        ("fluid_it", "pg25", None),
         ("T_i_H", None, ureg.degC),
         ("T_o_H", None, ureg.degC),
-        ("m_dot_H", 0.23, ureg.kilogram / ureg.second),
-        ("x_H", 0.637, ureg.dimensionless),
+        ("m_dot_H", 2.57, ureg.kilogram / ureg.second),
+        ("x_H", None, ureg.dimensionless),
     ]
     
     # Instantiate and display knowns for quick manual verification.

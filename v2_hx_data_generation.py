@@ -11,25 +11,25 @@ Q_ = ureg.Quantity
 ################################################################################
 
 # Fluid options and operating points to sweep.
-#FAC_FLUIDS = ("air", "pg25", "515")
-#IT_FLUIDS = ("pg25", "515")
-#POWER = (100, 250, 500, 1000)
-#T_INLET = (10, 20, 30, 40, 50)
+FAC_FLUIDS = ("air", "pg25", "515")
+IT_FLUIDS = ("pg25", "515")
+POWER = (100, 250, 500, 1000)
+T_INLET = (10, 20, 30, 40, 50)
 
 # Optional single input test
-FAC_FLUIDS = ("air",)
-IT_FLUIDS = ("515",)
-POWER = (127.2,)
-T_INLET = (31.4,)
+#FAC_FLUIDS = ("air",)
+#IT_FLUIDS = ("515",)
+#POWER = (127.2,)
+#T_INLET = (31.4,)
 
 TWO_PHASE_NAMES = {"515"}
 COLD_QUALITY = 0.7
 HOT_QUALITY = 0.7
-T_APPROACH = 1.2 # C. Desired approach temperature between IT and Facility.
+T_APPROACH = 3 # C. Desired approach temperature between IT and Facility.
 
 # Flow rate control. SET EITHER DT OR MDOT. Defaults to mdot if both are set.
-DT_1P = 21.2 # C. Allowed temperature rise of a single phase stream.
-DT_2P = 0 # C. Allowed temperature rise of a two phase stream. Equal to inlet subcooling.
+DT_1P = 10 # C. Allowed temperature rise of a single phase stream.
+DT_2P = 2 # C. Allowed temperature rise of a two phase stream. Equal to inlet subcooling.
 #m_dot_fac = Q_(357.6 * (1025/60000), ureg.kilogram / ureg.second) # kg/s. Faility mass flow rate
 #m_dot_it = Q_(132 * (1180/60000), ureg.kilogram / ureg.second) # kg/s. Faility mass flow rate
 
@@ -44,7 +44,7 @@ def two_phase_check(label: str) -> bool:
 
 # System Input Parameters
 sys_input = [
-    ("UA", 10000, ureg.watt / ureg.kelvin),
+    ("UA", None, ureg.watt / ureg.kelvin),
     ("q", None, ureg.kilowatt),
 ]
 
@@ -71,7 +71,7 @@ for fac_f in FAC_FLUIDS:
     for it_f in IT_FLUIDS:
         for heat_rate in POWER:
             for T_in in T_INLET:
-                sys_input[0] = ("UA", 50000, ureg.watt / ureg.kelvin)
+                sys_input[0] = ("UA", 10000, ureg.watt / ureg.kelvin)
                 sys_input[1] = ("q", heat_rate, ureg.kilowatt)
                 fac_input[0] = ("fluid_facility", fac_f, None)
                 fac_input[1] = ("T_i_C", T_in, ureg.degC)
@@ -132,9 +132,6 @@ for fac_f in FAC_FLUIDS:
                 if not two_phase_it:
                     it_input[4] = ("x_H", None, ureg.dimensionless)
 
-                # Instantiate and display knowns for quick manual verification.
-                hx = HeatExchanger(sys_input, fac_input, it_input, out_print=True)
-
                 # Set up iteration variables.
                 max_iter = 100
                 i = 0
@@ -153,14 +150,28 @@ for fac_f in FAC_FLUIDS:
                     else:
                         int_approach_1p = (hx.internal_knowns["T_i_H_1p"] - hx.internal_knowns["T_o_C_1p"]).magnitude
                         int_approach_1p2p = (hx.internal_knowns["T_i_H_1p2p"] - hx.internal_knowns["T_o_C_1p2p"]).magnitude
-                        print(cold_approach, hot_approach, int_approach_1p, int_approach_1p2p)
                         approach = min(cold_approach,hot_approach,int_approach_1p,int_approach_1p2p)
-                    if approach > T_APPROACH:
-                        UA_updated = sys_input[0][1]*(2-((i+1)/(101)))
-                    else:
-                        UA_updated = sys_input[0][1]*(0.5+((i+1)/(201)))
                     
-                    abs_approach = abs(approach-T_APPROACH)/T_APPROACH
+                    if fac_f != "air":
+                        if approach > T_APPROACH:
+                            UA_updated = sys_input[0][1]*(2-((i+1)/(101)))
+                            abs_approach = abs(approach-T_APPROACH)/T_APPROACH
+                        else:
+                            UA_updated = sys_input[0][1]*(0.5+((i+1)/(201)))
+                            abs_approach = abs(approach-T_APPROACH)/T_APPROACH
+
+                    else:
+                        if UA_updated<1E06:
+                            if approach > T_APPROACH:
+                                UA_updated = sys_input[0][1]*(2-((i+1)/(101)))
+                                abs_approach = abs(approach-T_APPROACH)/T_APPROACH
+                            else:
+                                UA_updated = sys_input[0][1]*(0.5+((i+1)/(201)))
+                                abs_approach = abs(approach-T_APPROACH)/T_APPROACH
+                        else:
+                            print("Maximum UA exceeded, approach temperature can't be reached.")
+                            abs_approach = 0
+                    
                     i += 1
                     if i >= max_iter:
                         raise ValueError(f"Max iterations reached searching for UA. UA:{UA_updated}, approach ratio: {approach/T_APPROACH}")
