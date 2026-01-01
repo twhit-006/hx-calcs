@@ -17,10 +17,10 @@ POWER = (100, 250, 500, 1000)
 T_INLET = (10, 20, 30, 40, 50)
 
 # Optional single input test
-#FAC_FLUIDS = ("air",)
+#FAC_FLUIDS = ("515",)
 #IT_FLUIDS = ("515",)
-#POWER = (127.2,)
-#T_INLET = (31.4,)
+#POWER = (100, 250, 500, 1000)
+#T_INLET = (10, 20, 30, 40, 50)
 
 TWO_PHASE_NAMES = {"515"}
 COLD_QUALITY = 0.7
@@ -30,11 +30,11 @@ T_APPROACH = 3 # C. Desired approach temperature between IT and Facility.
 # Flow rate control. SET EITHER DT OR MDOT. Defaults to mdot if both are set.
 DT_1P = 10 # C. Allowed temperature rise of a single phase stream.
 DT_2P = 2 # C. Allowed temperature rise of a two phase stream. Equal to inlet subcooling.
-#m_dot_fac = Q_(357.6 * (1025/60000), ureg.kilogram / ureg.second) # kg/s. Faility mass flow rate
-#m_dot_it = Q_(132 * (1180/60000), ureg.kilogram / ureg.second) # kg/s. Faility mass flow rate
+#m_dot_fac_set = Q_(357.6 * (1025/60000), ureg.kilogram / ureg.second) # kg/s. Faility mass flow rate
+#m_dot_it_set = Q_(132 * (1180/60000), ureg.kilogram / ureg.second) # kg/s. Faility mass flow rate
 
 # When True, skip the prompt and always save results to CSV.
-AUTO_SAVE = False
+AUTO_SAVE = True
 
 ################################################################################
 
@@ -71,7 +71,7 @@ for fac_f in FAC_FLUIDS:
     for it_f in IT_FLUIDS:
         for heat_rate in POWER:
             for T_in in T_INLET:
-                sys_input[0] = ("UA", 10000, ureg.watt / ureg.kelvin)
+                sys_input[0] = ("UA", 50000, ureg.watt / ureg.kelvin)
                 sys_input[1] = ("q", heat_rate, ureg.kilowatt)
                 fac_input[0] = ("fluid_facility", fac_f, None)
                 fac_input[1] = ("T_i_C", T_in, ureg.degC)
@@ -118,10 +118,14 @@ for fac_f in FAC_FLUIDS:
                 x_H = Q_(it_input[4][1],ureg.dimensionless)
 
                 # Estimate required mass flow rates based on target load and chosen temperature lifts.
-                if 'm_dot_fac' not in locals():
+                if 'm_dot_fac_set' not in locals():
                     m_dot_fac = q/(cp_fac*dT_fac + x_C * hfg_fac)
-                if 'm_dot_it' not in locals():
+                else:
+                    m_dot_fac = m_dot_fac_set
+                if 'm_dot_it_set' not in locals():
                     m_dot_it = q/(cp_it*dT_it + x_H * hfg_it)
+                else:
+                    m_dot_it = m_dot_it_set
 
                 fac_input[3] = ("m_dot_C", m_dot_fac.magnitude, ureg.kilogram / ureg.second)
                 it_input[3] = ("m_dot_H", m_dot_it.magnitude, ureg.kilogram / ureg.second)
